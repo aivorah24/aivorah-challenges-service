@@ -3,6 +3,7 @@ jest.mock('../../services/supabase', () => {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
     in: jest.fn().mockReturnThis(),
+    order: jest.fn().mockReturnThis(),
     single: jest.fn(),
     maybeSingle: jest.fn(),
   };
@@ -17,6 +18,7 @@ const { sendPush } = require('../../services/push');
 const {
   getChallenges,
   getChallengeById,
+  getChallengeQuestions,
   attachImageUrl,
   computeLevel,
   isPastDue,
@@ -194,5 +196,46 @@ describe('notifyChallengeAssigned', () => {
       return supabase._chain;
     });
     await expect(notifyChallengeAssigned({ challenge, studentId: 's1', assignmentId: 'a1' })).resolves.toBeUndefined();
+  });
+});
+
+describe('getChallengeQuestions', () => {
+  test('maps real DB rows (snake_case) to camelCase question objects, ordered by sort_order', async () => {
+    Object.assign(supabase._chain, {
+      then: (resolve) => resolve({
+        data: [
+          { challenge_id: 'c1', question: 'What is 2+2?', options: ['3', '4', '5', '6'], correct: 1, explanation: 'Basic addition.', sort_order: 0, question_type: 'mcq', accept_answers: null },
+        ],
+        error: null,
+      }),
+    });
+
+    const result = await getChallengeQuestions('c1');
+
+    expect(result).toEqual([{
+      question: 'What is 2+2?', options: ['3', '4', '5', '6'], correct: 1,
+      explanation: 'Basic addition.', questionType: 'mcq', acceptAnswers: null,
+    }]);
+    expect(supabase._chain.eq).toHaveBeenCalledWith('challenge_id', 'c1');
+    expect(supabase._chain.order).toHaveBeenCalledWith('sort_order', { ascending: true });
+  });
+
+  test('a challenge with no seeded questions yet returns an empty array, not an error', async () => {
+    Object.assign(supabase._chain, { then: (resolve) => resolve({ data: [], error: null }) });
+    const result = await getChallengeQuestions('unseeded_challenge');
+    expect(result).toEqual([]);
+  });
+
+  test('defaults missing explanation/questionType/acceptAnswers to safe fallbacks', async () => {
+    Object.assign(supabase._chain, {
+      then: (resolve) => resolve({ data: [{ question: 'Q', options: [], correct: 0 }], error: null }),
+    });
+    const result = await getChallengeQuestions('c1');
+    expect(result[0]).toEqual({ question: 'Q', options: [], correct: 0, explanation: '', questionType: 'mcq', acceptAnswers: null });
+  });
+
+  test('a real DB error is thrown, not swallowed', async () => {
+    Object.assign(supabase._chain, { then: (resolve) => resolve({ data: null, error: { message: 'connection failed' } }) });
+    await expect(getChallengeQuestions('c1')).rejects.toEqual({ message: 'connection failed' });
   });
 });

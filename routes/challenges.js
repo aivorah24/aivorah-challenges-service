@@ -4,6 +4,7 @@ const supabase = require('../services/supabase');
 const {
   getChallenges,
   getChallengeById,
+  getChallengeQuestions,
   attachImageUrl,
   computeLevel,
   isPastDue,
@@ -311,6 +312,21 @@ router.get('/leaderboard', async (req, res) => {
       .map((s, i) => ({ ...s, rank: i + 1, totalStudents }));
 
     res.json({ leaderboard: ranked, totalStudents });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /challenges/:id/questions ────────────────────────────────
+// Predefined MCQs for a curated challenge — pure DB read, no AI-generation
+// fallback (curated NCERT challenges must serve instantly). Returns [] if
+// this challenge has no seeded questions yet; the frontend falls back to
+// its existing live-generation path in that case.
+
+router.get('/:id/questions', async (req, res) => {
+  try {
+    const questions = await getChallengeQuestions(req.params.id);
+    res.json(questions);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

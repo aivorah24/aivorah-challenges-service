@@ -47,6 +47,33 @@ async function getChallengeById(id) {
   return rowToChallenge(data);
 }
 
+// Map snake_case DB row → camelCase question object
+function rowToQuestion(row) {
+  return {
+    question:     row.question,
+    options:      row.options || [],
+    correct:      row.correct,
+    explanation:  row.explanation || '',
+    questionType: row.question_type || 'mcq',
+    acceptAnswers: row.accept_answers || null,
+  };
+}
+
+// Fetch the predefined MCQs for a challenge, in authoring order. Pure DB
+// read — no AI-generation fallback here by design (see BUGS_AND_FIXES.md /
+// the Challenges content-population plan): curated NCERT challenges must
+// serve instantly with zero generation latency. Returns [] if none are
+// seeded yet for this challenge, letting the caller decide the fallback.
+async function getChallengeQuestions(challengeId) {
+  const { data, error } = await supabase
+    .from('challenge_questions')
+    .select('*')
+    .eq('challenge_id', challengeId)
+    .order('sort_order', { ascending: true });
+  if (error) throw error;
+  return (data || []).map(rowToQuestion);
+}
+
 function attachImageUrl(challenge) {
   const urlMap = readCloudinaryUrls();
   // Try exact key first
@@ -126,6 +153,7 @@ async function notifyChallengeAssigned({ challenge, studentId, assignmentId, due
 module.exports = {
   getChallenges,
   getChallengeById,
+  getChallengeQuestions,
   attachImageUrl,
   computeLevel,
   isPastDue,

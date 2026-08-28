@@ -3,6 +3,7 @@ const request = require('supertest');
 jest.mock('../../services/challenges', () => ({
   getChallenges: jest.fn(),
   getChallengeById: jest.fn(),
+  getChallengeQuestions: jest.fn(),
   attachImageUrl: jest.fn((c) => ({ ...c, imageUrl: null })),
   computeLevel: jest.fn(() => 2),
   isPastDue: jest.fn(() => false),
@@ -26,7 +27,7 @@ jest.mock('../../services/supabase', () => {
 });
 
 const {
-  getChallenges, getChallengeById, isPastDue, notifyChallengeAssigned,
+  getChallenges, getChallengeById, getChallengeQuestions, isPastDue, notifyChallengeAssigned,
 } = require('../../services/challenges');
 const supabase = require('../../services/supabase');
 const app = require('../../index');
@@ -409,5 +410,34 @@ describe('GET /challenges/leaderboard', () => {
     });
     const res = await request(app).get('/challenges/leaderboard');
     expect(res.status).toBe(500);
+  });
+});
+
+describe('GET /challenges/:id/questions', () => {
+  test('returns the real predefined MCQs for a curated challenge', async () => {
+    const questions = [
+      { question: 'What is 2+2?', options: ['3', '4', '5', '6'], correct: 1, explanation: 'Basic addition.', questionType: 'mcq', acceptAnswers: null },
+    ];
+    getChallengeQuestions.mockResolvedValue(questions);
+
+    const res = await request(app).get('/challenges/ncert_g1_maths_1/questions');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(questions);
+    expect(getChallengeQuestions).toHaveBeenCalledWith('ncert_g1_maths_1');
+  });
+
+  test('a challenge with no seeded questions returns an empty array (not a 404) — frontend decides the fallback', async () => {
+    getChallengeQuestions.mockResolvedValue([]);
+    const res = await request(app).get('/challenges/some_legacy_challenge/questions');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  test('a real DB error maps to 500', async () => {
+    getChallengeQuestions.mockRejectedValue(new Error('connection failed'));
+    const res = await request(app).get('/challenges/c1/questions');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('connection failed');
   });
 });
