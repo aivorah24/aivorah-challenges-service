@@ -83,10 +83,15 @@ describe('GET /challenges', () => {
     expect(res.body[1]).toEqual(expect.objectContaining({ id: 'c2', status: 'available', assignmentId: null }));
   });
 
-  test('with studentId but no parentEmail, returns 403 (ownership check)', async () => {
+  test('with studentId but no parentEmail, allows the request (non-parent caller, e.g. student/teacher) and merges assignment status', async () => {
     getChallenges.mockResolvedValue([{ id: 'c1', title: 'Quiz' }]);
+    supabase.from.mockImplementation((table) => {
+      if (table === 'challenge_assignments') return makeThenableChain([]);
+      return supabase._chain;
+    });
     const res = await request(app).get('/challenges?studentId=s1');
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect(res.body[0]).toEqual(expect.objectContaining({ id: 'c1', status: 'available' }));
   });
 
   test('with studentId and a parentEmail not linked to that student, returns 403', async () => {

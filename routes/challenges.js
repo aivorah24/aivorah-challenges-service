@@ -30,16 +30,19 @@ async function isParentLinkedToStudent(parentEmail, studentId) {
 
 // ── GET /challenges?grade=Grade3&curriculum=NCERT&studentId=xxx&parentEmail=xxx ──
 //
-// Ownership check (parent role only, added 2026-09-02 - was previously
-// missing entirely: any studentId was accepted with zero verification,
-// letting a parent view any child's challenge status). Only the parent
-// screen (aivorah-frontend's parentChallengesService.ts) currently sends
-// studentId to this route on this service, so requiring parentEmail
-// alongside studentId here doesn't affect any other real caller (student's
-// own useChallengesList.ts and teacher's legacy screen both call the
-// monolith's /challenges, not this service, for their studentId-scoped
-// requests - see aivorah-frontend grep, 2026-09-02 investigation).
-
+// Ownership check, added 2026-09-02, corrected same day: the original
+// version 403'd any studentId-scoped request that lacked parentEmail,
+// which wrongly assumed only the parent screen ever sends studentId here.
+// It does not - src/screens/student/challenges/hooks/useChallengesList.ts
+// imports this same service's URL (aliased locally as SERVER_URL, hence
+// missed by an initial grep for the literal name) and calls this route with
+// studentId and no parentEmail, so that broke every real student's
+// Challenges screen in production. There's no session/auth layer on this
+// service at all, so parentEmail is a self-reported claim, not a verified
+// identity - the only thing this check can honestly gate is "if you claim
+// to be a parent, you must actually be linked to this child." A caller
+// that sends no parentEmail is making no ownership claim to police, so it
+// gets the same unrestricted merge every non-parent caller always got.
 router.get('/', async (req, res) => {
   const { grade, curriculum = 'NCERT', studentId, parentEmail } = req.query;
   let challenges;
@@ -48,7 +51,7 @@ router.get('/', async (req, res) => {
 
   if (!studentId) return res.json(challenges.map(attachImageUrl));
 
-  if (!(await isParentLinkedToStudent(parentEmail, studentId))) {
+  if (parentEmail && !(await isParentLinkedToStudent(parentEmail, studentId))) {
     return res.status(403).json({ error: 'Not authorized for this student' });
   }
 
