@@ -66,20 +66,37 @@ describe('GET /challenges', () => {
     expect(res.body).toEqual([{ id: 'c1', title: 'Quiz', imageUrl: null }]);
   });
 
-  test('with studentId, merges the student\'s real assignment status onto each challenge', async () => {
+  test('with studentId, requires a parentEmail linked to that student and merges real assignment status onto each challenge', async () => {
     getChallenges.mockResolvedValue([{ id: 'c1', title: 'Quiz' }, { id: 'c2', title: 'Other' }]);
     supabase.from.mockImplementation((table) => {
+      if (table === 'parent_children') return { ...supabase._chain, maybeSingle: jest.fn().mockResolvedValue({ data: { child_id: 's1' }, error: null }) };
       if (table === 'challenge_assignments') return makeThenableChain([
         { id: 'asg1', challenge_id: 'c1', status: 'assigned', score: null, xp_awarded: null, due_date: '2026-05-01', assigned_by_role: 'teacher' },
       ]);
       return supabase._chain;
     });
 
-    const res = await request(app).get('/challenges?studentId=s1');
+    const res = await request(app).get('/challenges?studentId=s1&parentEmail=parent@x.com');
 
     expect(res.status).toBe(200);
     expect(res.body[0]).toEqual(expect.objectContaining({ id: 'c1', assignmentId: 'asg1', status: 'assigned', dueDate: '2026-05-01' }));
     expect(res.body[1]).toEqual(expect.objectContaining({ id: 'c2', status: 'available', assignmentId: null }));
+  });
+
+  test('with studentId but no parentEmail, returns 403 (ownership check)', async () => {
+    getChallenges.mockResolvedValue([{ id: 'c1', title: 'Quiz' }]);
+    const res = await request(app).get('/challenges?studentId=s1');
+    expect(res.status).toBe(403);
+  });
+
+  test('with studentId and a parentEmail not linked to that student, returns 403', async () => {
+    getChallenges.mockResolvedValue([{ id: 'c1', title: 'Quiz' }]);
+    supabase.from.mockImplementation((table) => {
+      if (table === 'parent_children') return { ...supabase._chain, maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }) };
+      return supabase._chain;
+    });
+    const res = await request(app).get('/challenges?studentId=s1&parentEmail=stranger@x.com');
+    expect(res.status).toBe(403);
   });
 
   test('a getChallenges service error maps to 500', async () => {
@@ -171,6 +188,41 @@ describe('POST /challenges/assign', () => {
     getChallengeById.mockResolvedValue(null);
     const res = await request(app).post('/challenges/assign').send({ challengeId: 'ghost', studentId: 's1' });
     expect(res.status).toBe(404);
+  });
+
+  test('parent role: 403s when assignedById is not linked to studentId via parent_children', async () => {
+    supabase.from.mockImplementation((table) => {
+      if (table === 'parent_children') return { ...supabase._chain, maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }) };
+      return supabase._chain;
+    });
+    const res = await request(app).post('/challenges/assign').send({
+      challengeId: 'c1', studentId: 's1', assignedById: 'stranger@x.com', assignedByRole: 'parent',
+    });
+    expect(res.status).toBe(403);
+    expect(getChallengeById).not.toHaveBeenCalled();
+  });
+
+  test('parent role: succeeds when assignedById IS linked to studentId via parent_children', async () => {
+    getChallengeById.mockResolvedValue({ id: 'c1', title: 'Quiz', grade: null });
+    supabase.from.mockImplementation((table) => {
+      if (table === 'parent_children') return { ...supabase._chain, maybeSingle: jest.fn().mockResolvedValue({ data: { child_id: 's1' }, error: null }) };
+      if (table === 'challenge_assignments') return { ...supabase._chain, single: jest.fn().mockResolvedValue({ data: { id: 'asg1', status: 'assigned' } }) };
+      return supabase._chain;
+    });
+    const res = await request(app).post('/challenges/assign').send({
+      challengeId: 'c1', studentId: 's1', assignedById: 'parent@x.com', assignedByRole: 'parent',
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test('non-parent roles (teacher/student) are not subject to the ownership check', async () => {
+    getChallengeById.mockResolvedValue({ id: 'c1', title: 'Quiz', grade: null });
+    supabase.from.mockImplementation((table) => {
+      if (table === 'challenge_assignments') return { ...supabase._chain, single: jest.fn().mockResolvedValue({ data: { id: 'asg1', status: 'assigned' } }) };
+      return supabase._chain;
+    });
+    const res = await request(app).post('/challenges/assign').send({ challengeId: 'c1', studentId: 's1' });
+    expect(res.status).toBe(200);
   });
 
   test('rejects assigning a challenge to a student in a different grade', async () => {

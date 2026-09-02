@@ -13,15 +13,44 @@ const {
 
 function uuidv4() { return require('crypto').randomUUID(); }
 
-// ── GET /challenges?grade=Grade3&curriculum=NCERT&studentId=xxx ──
+// Verifies parentEmail actually has a parent_children link to studentId
+// (same table/columns aivorah-students-service's GET /parent/:email/children
+// and teacher.js's linking logic use: parent_email, child_id). Returns false
+// on any lookup error too - fail closed, not open, for an ownership check.
+async function isParentLinkedToStudent(parentEmail, studentId) {
+  if (!parentEmail || !studentId) return false;
+  const { data, error } = await supabase
+    .from('parent_children')
+    .select('child_id')
+    .eq('parent_email', parentEmail.toLowerCase().trim())
+    .eq('child_id', studentId)
+    .maybeSingle();
+  return !error && !!data;
+}
+
+// ── GET /challenges?grade=Grade3&curriculum=NCERT&studentId=xxx&parentEmail=xxx ──
+//
+// Ownership check (parent role only, added 2026-09-02 - was previously
+// missing entirely: any studentId was accepted with zero verification,
+// letting a parent view any child's challenge status). Only the parent
+// screen (aivorah-frontend's parentChallengesService.ts) currently sends
+// studentId to this route on this service, so requiring parentEmail
+// alongside studentId here doesn't affect any other real caller (student's
+// own useChallengesList.ts and teacher's legacy screen both call the
+// monolith's /challenges, not this service, for their studentId-scoped
+// requests - see aivorah-frontend grep, 2026-09-02 investigation).
 
 router.get('/', async (req, res) => {
-  const { grade, curriculum = 'NCERT', studentId } = req.query;
+  const { grade, curriculum = 'NCERT', studentId, parentEmail } = req.query;
   let challenges;
   try { challenges = await getChallenges(grade, curriculum); }
   catch (e) { return res.status(500).json({ error: e.message }); }
 
   if (!studentId) return res.json(challenges.map(attachImageUrl));
+
+  if (!(await isParentLinkedToStudent(parentEmail, studentId))) {
+    return res.status(403).json({ error: 'Not authorized for this student' });
+  }
 
   const { data: assignments } = await supabase
     .from('challenge_assignments')
@@ -101,6 +130,15 @@ router.get('/new-count', async (req, res) => {
 router.post('/assign', async (req, res) => {
   const { challengeId, studentId, assignedById, assignedByRole = 'teacher', dueDate } = req.body;
   if (!challengeId || !studentId) return res.status(400).json({ error: 'challengeId and studentId required' });
+
+  // Ownership check (parent role only, added 2026-09-02, same gap/fix as
+  // GET / above). assignedById already carries the parent's email for
+  // parent-role assigns (see aivorah-frontend's parentChallengesService.ts)
+  // - teacher/student assigns are untouched, no assignedById-as-email
+  // assumption holds for those roles.
+  if (assignedByRole === 'parent' && !(await isParentLinkedToStudent(assignedById, studentId))) {
+    return res.status(403).json({ error: 'Not authorized for this student' });
+  }
 
   const challengeCheck = await getChallengeById(challengeId);
   if (!challengeCheck) return res.status(404).json({ error: 'Challenge not found' });
