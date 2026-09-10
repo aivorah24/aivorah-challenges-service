@@ -30,11 +30,14 @@ function rowToChallenge(row) {
   };
 }
 
-// Fetch all challenges with optional grade/curriculum filters
+// Fetch all challenges with an optional grade filter. Every row in this
+// table is seeded common content (curriculum: "CBSE") - there is no
+// teacher-created/curriculum-specific challenge path - so filtering by the
+// caller's own curriculum (IB PYP, NCERT, ...) only ever excluded every
+// seeded challenge. Grade still filters normally.
 async function getChallenges(grade, curriculum) {
   let query = supabase.from('challenges').select('*').eq('is_published', true);
-  if (grade)      query = query.eq('grade', grade);
-  if (curriculum) query = query.eq('curriculum', curriculum);
+  if (grade) query = query.eq('grade', grade);
   const { data, error } = await query;
   if (error) throw error;
   return (data || []).map(rowToChallenge);

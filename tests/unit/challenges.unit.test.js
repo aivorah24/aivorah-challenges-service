@@ -54,6 +54,23 @@ describe('getChallenges', () => {
     }]);
   });
 
+  test('B04-Persona: never filters by curriculum - a seeded CBSE challenge is returned even when the caller passes an unrelated curriculum', async () => {
+    Object.assign(supabase._chain, {
+      then: (resolve) => resolve({
+        data: [{ id: 'c1', title: 'Seeded Quiz', curriculum: 'CBSE', grade: 'Grade 4', is_published: true }],
+        error: null,
+      }),
+    });
+
+    const result = await getChallenges('Grade 4', 'IB PYP');
+
+    expect(result).toHaveLength(1);
+    expect(result[0].curriculum).toBe('CBSE');
+    // grade should still be filtered on; curriculum should never be.
+    expect(supabase._chain.eq).toHaveBeenCalledWith('grade', 'Grade 4');
+    expect(supabase._chain.eq).not.toHaveBeenCalledWith('curriculum', expect.anything());
+  });
+
   test('defaults topic and type to empty string when missing', async () => {
     Object.assign(supabase._chain, {
       then: (resolve) => resolve({ data: [{ id: 'c1', title: 't', is_published: true }], error: null }),
