@@ -131,8 +131,11 @@ router.get('/new-count', async (req, res) => {
 // ── POST /challenges/assign ──────────────────────────────────────
 
 router.post('/assign', async (req, res) => {
-  const { challengeId, studentId, assignedById, assignedByRole = 'teacher', dueDate } = req.body;
+  const { challengeId, studentId, assignedById, assignedByRole = 'teacher', startDate = null, dueDate } = req.body;
   if (!challengeId || !studentId) return res.status(400).json({ error: 'challengeId and studentId required' });
+  if (startDate && new Date(startDate) > new Date(dueDate)) {
+    return res.status(400).json({ error: 'startDate cannot be after dueDate' });
+  }
 
   // Ownership check (parent role only, added 2026-09-02, same gap/fix as
   // GET / above). assignedById already carries the parent's email for
@@ -185,6 +188,7 @@ router.post('/assign', async (req, res) => {
       .update({
         assigned_by_id:   assignedById || '',
         assigned_by_role: assignedByRole,
+        start_date:       startDate || null,
         due_date:         dueDate || null,
         status:           'assigned',
         score:            null,
@@ -203,6 +207,7 @@ router.post('/assign', async (req, res) => {
         student_id:       studentId,
         assigned_by_id:   assignedById || '',
         assigned_by_role: assignedByRole,
+        start_date:       startDate || null,
         due_date:         dueDate || null,
         status:           'assigned',
       })
@@ -216,20 +221,27 @@ router.post('/assign', async (req, res) => {
 
   // Auto-add to schedule if dueDate provided
   if (dueDate) {
-    const { error: scheduleError } = await supabase.from('schedule_events').insert({
-      id:            uuidv4(),
-      title:         `${challengeCheck.title} — Challenge due`,
-      event_date:    dueDate,
-      start_time:    '23:59',
-      end_time:      '23:59',
-      type:          'challenge',
-      note:          `${challengeCheck.category} · ${challengeCheck.subject}${challengeCheck.grade ? ' · ' + challengeCheck.grade : ''}`,
-      student_id:    studentId,
-      created_by:    assignedByRole,
-      tag:           challengeCheck.subject || null,
-      assignment_id: data.id,
-    });
-    if (scheduleError) console.error('[challenges/assign] schedule_events insert failed:', scheduleError.message);
+    const schRes = await supabase.from('schedule_events').select('id').eq('assignment_id', data.id).maybeSingle();
+    const existingSch = schRes?.data;
+    if (!existingSch) {
+      const extractTime = (ds) => (ds && typeof ds === 'string' && ds.includes('T')) ? ds.split('T')[1].substring(0, 5) : '23:59';
+      const { error: scheduleError } = await supabase.from('schedule_events').insert({
+        id:            uuidv4(),
+        title:         `${challengeCheck.title} — Challenge due`,
+        event_date:    dueDate.includes('T') ? dueDate.split('T')[0] : dueDate,
+        start_date:    startDate ? (startDate.includes('T') ? startDate.split('T')[0] : startDate) : null,
+        start_time:    extractTime(startDate),
+        end_time:      extractTime(dueDate),
+        type:          'challenge',
+        note:          `${challengeCheck.category} • ${challengeCheck.subject}${challengeCheck.grade ? ' • ' + challengeCheck.grade : ''}`,
+        student_id:    studentId,
+        created_by:    assignedByRole,
+        tag:           challengeCheck.subject || null,
+        assignment_id: data.id,
+        challenge_id:  challengeId,
+      });
+      if (scheduleError) console.error('[challenges/assign] schedule_events insert failed:', scheduleError.message);
+    }
   }
 
   res.json({ ...data, assignmentId: data.id });
