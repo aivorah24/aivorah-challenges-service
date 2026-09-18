@@ -131,11 +131,8 @@ router.get('/new-count', async (req, res) => {
 // ── POST /challenges/assign ──────────────────────────────────────
 
 router.post('/assign', async (req, res) => {
-  const { challengeId, studentId, assignedById, assignedByRole = 'teacher', startDate = null, dueDate } = req.body;
+  const { challengeId, studentId, assignedById, assignedByRole = 'teacher', dueDate } = req.body;
   if (!challengeId || !studentId) return res.status(400).json({ error: 'challengeId and studentId required' });
-  if (startDate && new Date(startDate) > new Date(dueDate)) {
-    return res.status(400).json({ error: 'startDate cannot be after dueDate' });
-  }
 
   // Ownership check (parent role only, added 2026-09-02, same gap/fix as
   // GET / above). assignedById already carries the parent's email for
@@ -188,7 +185,6 @@ router.post('/assign', async (req, res) => {
       .update({
         assigned_by_id:   assignedById || '',
         assigned_by_role: assignedByRole,
-        start_date:       startDate || null,
         due_date:         dueDate || null,
         status:           'assigned',
         score:            null,
@@ -207,7 +203,6 @@ router.post('/assign', async (req, res) => {
         student_id:       studentId,
         assigned_by_id:   assignedById || '',
         assigned_by_role: assignedByRole,
-        start_date:       startDate || null,
         due_date:         dueDate || null,
         status:           'assigned',
       })
@@ -229,8 +224,7 @@ router.post('/assign', async (req, res) => {
         id:            uuidv4(),
         title:         `${challengeCheck.title} — Challenge due`,
         event_date:    dueDate.includes('T') ? dueDate.split('T')[0] : dueDate,
-        start_date:    startDate ? (startDate.includes('T') ? startDate.split('T')[0] : startDate) : null,
-        start_time:    extractTime(startDate),
+        start_time:    extractTime(null),
         end_time:      extractTime(dueDate),
         type:          'challenge',
         note:          `${challengeCheck.category} • ${challengeCheck.subject}${challengeCheck.grade ? ' • ' + challengeCheck.grade : ''}`,
