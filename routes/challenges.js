@@ -171,7 +171,10 @@ router.post('/assign', async (req, res) => {
     .eq('student_id', studentId)
     .single();
   if (existing && existing.status !== 'completed') {
-    return res.json({ ...existing, assignmentId: existing.id });
+    // alreadyAssigned tells the client this was a no-op (no new notification
+    // was sent) so it can show "Already assigned" instead of implying a
+    // fresh assignment just went out.
+    return res.json({ ...existing, assignmentId: existing.id, alreadyAssigned: true });
   }
 
   let data, error;
