@@ -256,6 +256,24 @@ describe('POST /challenges/assign', () => {
     expect(res.body).toEqual(expect.objectContaining({ id: 'asg1', assignmentId: 'asg1' }));
   });
 
+  // Regression: re-assigning a challenge that's already pending for this
+  // student silently no-ops (no new row, no notification) but the client
+  // showed the same "assigned!" success message either way, making it look
+  // like notifications had stopped firing. The response must say so.
+  test('flags an already-pending re-assign as alreadyAssigned, and does not notify again', async () => {
+    getChallengeById.mockResolvedValue({ id: 'c1', title: 'Quiz', grade: null });
+    supabase.from.mockImplementation((table) => {
+      if (table === 'challenge_assignments') return { ...supabase._chain, single: jest.fn().mockResolvedValue({ data: { id: 'asg1', status: 'assigned' } }) };
+      return supabase._chain;
+    });
+
+    const res = await request(app).post('/challenges/assign').send({ challengeId: 'c1', studentId: 's1' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.alreadyAssigned).toBe(true);
+    expect(notifyChallengeAssigned).not.toHaveBeenCalled();
+  });
+
   test('creates a real new assignment, notifies, and adds a schedule event when a dueDate is given', async () => {
     getChallengeById.mockResolvedValue({ id: 'c1', title: 'Quiz', grade: null, category: 'quiz', subject: 'Math' });
     let assignmentsCallCount = 0;
