@@ -136,6 +136,36 @@ describe('GET /challenges/assigned', () => {
   });
 });
 
+describe('GET /challenges/assigned-by', () => {
+  test('requires assignedById', async () => {
+    const res = await request(app).get('/challenges/assigned-by');
+    expect(res.status).toBe(400);
+  });
+
+  test('returns the assigner’s challenge/student pairs, scoped by assigned_by_id', async () => {
+    const chain = makeThenableChain([
+      { challenge_id: 'c1', student_id: 's1', status: 'assigned', due_date: '2026-05-01' },
+      { challenge_id: 'c1', student_id: 's2', status: 'completed', due_date: null },
+    ]);
+    supabase.from.mockImplementation((table) => (table === 'challenge_assignments' ? chain : supabase._chain));
+
+    const res = await request(app).get('/challenges/assigned-by?assignedById=teacher@x.com');
+
+    expect(res.status).toBe(200);
+    expect(chain.eq).toHaveBeenCalledWith('assigned_by_id', 'teacher@x.com');
+    expect(res.body).toEqual([
+      { challengeId: 'c1', studentId: 's1', status: 'assigned', dueDate: '2026-05-01' },
+      { challengeId: 'c1', studentId: 's2', status: 'completed', dueDate: null },
+    ]);
+  });
+
+  test('a query error maps to 500', async () => {
+    supabase.from.mockImplementation(() => makeThenableChain(null, { message: 'db down' }));
+    const res = await request(app).get('/challenges/assigned-by?assignedById=teacher@x.com');
+    expect(res.status).toBe(500);
+  });
+});
+
 describe('GET /challenges/new-count', () => {
   test('requires studentId', async () => {
     const res = await request(app).get('/challenges/new-count');
