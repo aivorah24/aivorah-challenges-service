@@ -10,8 +10,20 @@ const {
   isPastDue,
   notifyChallengeAssigned,
 } = require('../services/challenges');
+const { challengeAssignedEvent, createNotificationEvent } = require('../services/notify');
 
 function uuidv4() { return require('crypto').randomUUID(); }
+
+async function respondAlreadyAssigned(res, challengeId, studentId) {
+  const { data: current, error } = await supabase
+    .from('challenge_assignments')
+    .select('*')
+    .eq('challenge_id', challengeId)
+    .eq('student_id', studentId)
+    .maybeSingle();
+  if (error || !current) return res.status(409).json({ error: 'Assignment changed concurrently, please retry.' });
+  return res.json({ ...current, assignmentId: current.id, alreadyAssigned: true });
+}
 
 // Verifies parentEmail actually has a parent_children link to studentId
 // (same table/columns aivorah-students-service's GET /parent/:email/children
@@ -193,10 +205,13 @@ router.post('/assign', async (req, res) => {
         score:            null,
         xp_awarded:       null,
         completed_at:     null,
+        assigned_at:      new Date().toISOString(),
       })
       .eq('id', existing.id)
+      .eq('status', 'completed') // a concurrent re-assign that already won matches nothing
       .select()
-      .single());
+      .maybeSingle());
+    if (!error && !data) return respondAlreadyAssigned(res, challengeId, studentId);
   } else {
     ({ data, error } = await supabase
       .from('challenge_assignments')
@@ -213,8 +228,14 @@ router.post('/assign', async (req, res) => {
       .single());
   }
 
+  // Double submit: the other request inserted first (unique challenge_id + student_id).
+  if (error && error.code === '23505') return respondAlreadyAssigned(res, challengeId, studentId);
   if (error) return res.status(500).json({ error: error.message });
 
+  await createNotificationEvent(challengeAssignedEvent({
+    challenge: challengeCheck, assignment: data, actorEmail: assignedById, actorRole: assignedByRole,
+  }));
+  // Legacy push + parent system message keep running until V2 delivery ships.
   notifyChallengeAssigned({ challenge: challengeCheck, studentId, assignmentId: data.id, dueDate }).catch(() => {});
 
   // Auto-add to schedule if dueDate provided
