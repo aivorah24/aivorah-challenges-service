@@ -102,6 +102,23 @@ router.get('/assigned', async (req, res) => {
   res.json(result);
 });
 
+// ── GET /challenges/assigned-by?assignedById=email ───────────────
+// Lets the teacher screen show which students already have each challenge.
+router.get('/assigned-by', async (req, res) => {
+  const assignedById = (req.query.assignedById || '').trim();
+  if (!assignedById) return res.status(400).json({ error: 'assignedById required' });
+
+  const { data, error } = await supabase
+    .from('challenge_assignments')
+    .select('challenge_id, student_id, status, due_date')
+    .eq('assigned_by_id', assignedById);
+  if (error) return res.status(500).json({ error: error.message });
+
+  res.json((data ?? []).map(a => ({
+    challengeId: a.challenge_id, studentId: a.student_id, status: a.status, dueDate: a.due_date,
+  })));
+});
+
 // ── GET /challenges/new-count?studentId=xxx&since=ISO_DATE ──────
 router.get('/new-count', async (req, res) => {
   const { studentId, since } = req.query;
