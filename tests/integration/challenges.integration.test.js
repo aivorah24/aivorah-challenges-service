@@ -327,11 +327,13 @@ describe('POST /challenges/assign', () => {
   test('re-assigning an already-completed challenge resets it to assigned instead of leaving it completed', async () => {
     getChallengeById.mockResolvedValue({ id: 'c1', title: 'Quiz', grade: null });
     let assignmentsCallCount = 0;
+    let updateChain;
     supabase.from.mockImplementation((table) => {
       if (table === 'challenge_assignments') {
         assignmentsCallCount++;
         if (assignmentsCallCount === 1) return { ...supabase._chain, single: jest.fn().mockResolvedValue({ data: { id: 'asg1', status: 'completed' } }) };
-        return { ...supabase._chain, update: jest.fn().mockReturnThis(), select: jest.fn().mockReturnThis(), single: jest.fn().mockResolvedValue({ data: { id: 'asg1', status: 'assigned' }, error: null }) };
+        updateChain = { ...supabase._chain, update: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(), select: jest.fn().mockReturnThis(), maybeSingle: jest.fn().mockResolvedValue({ data: { id: 'asg1', status: 'assigned' }, error: null }) };
+        return updateChain;
       }
       return supabase._chain;
     });
@@ -340,6 +342,9 @@ describe('POST /challenges/assign', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual(expect.objectContaining({ id: 'asg1', status: 'assigned' }));
+    // New version for the notification event, and only if still completed (double-submit guard).
+    expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'assigned', assigned_at: expect.any(String) }));
+    expect(updateChain.eq).toHaveBeenCalledWith('status', 'completed');
   });
 });
 
