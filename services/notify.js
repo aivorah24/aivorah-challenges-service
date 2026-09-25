@@ -60,4 +60,26 @@ async function createNotificationEvent(evt) {
   }
 }
 
-module.exports = { challengeAssignedEvent, createNotificationEvent, formatDue };
+// Clears (marks read) the still-open notifications for this entity once they're stale:
+// the student's own row and their parents' rows about that child. Never throws.
+async function clearNotificationsForEntity({ entityId, studentId, reason }) {
+  const base = { evt: 'notification.clear', entityType: 'challenge_assignment', entity: String(entityId), reason };
+  try {
+    let q = supabase
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('entity_type', 'challenge_assignment')
+      .eq('entity_id', String(entityId))
+      .is('read_at', null);
+    if (studentId) q = q.or(`recipient_id.eq.${studentId},child_id.eq.${studentId}`);
+    const { data, error } = await q.select('id');
+    if (error) throw new Error(error.message);
+    logEvent({ ...base, ok: true, cleared: (data || []).length });
+    return { ok: true, cleared: (data || []).length };
+  } catch (err) {
+    logEvent({ ...base, ok: false, reason: err.message });
+    return { ok: false, error: err.message };
+  }
+}
+
+module.exports = { challengeAssignedEvent, createNotificationEvent, clearNotificationsForEntity, formatDue };

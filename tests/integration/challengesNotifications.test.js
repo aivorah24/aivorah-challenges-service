@@ -7,7 +7,7 @@ jest.mock('../../services/supabase', () => {
   const from = (table) => {
     const ops = [];
     const chain = {};
-    for (const m of ['select', 'eq', 'neq', 'in', 'gt', 'insert', 'update', 'delete', 'order', 'limit']) {
+    for (const m of ['select', 'eq', 'neq', 'in', 'gt', 'insert', 'update', 'delete', 'order', 'limit', 'is', 'or']) {
       chain[m] = (...args) => { ops.push([m, ...args]); return chain; };
     }
     const done = () => Promise.resolve(mockResolveQuery(table, ops) ?? { data: null, error: null });
@@ -164,4 +164,66 @@ test('notification failure never fails the assignment', async () => {
   expect(res.status).toBe(200);
   const line = logSpy.mock.calls.map(c => c[0]).find(l => /notification\.create/.test(l));
   expect(JSON.parse(line)).toMatchObject({ svc: 'challenges', ok: false, reason: 'db timeout', entity: 'ca-new' });
+});
+
+
+// ── clearing on completion / unassign ──
+const notificationWrites = () => mockResolveQuery.mock.calls.filter(([t, ops]) => t === 'notifications' && has(ops, 'update'));
+
+describe('clearing stale notifications', () => {
+  const completeWorld = (status = 'assigned', studentId = S1) => world({
+    challenge_assignments: (ops) => {
+      if (has(ops, 'update')) return { data: { id: 'ca-1', status: 'completed' }, error: null };
+      if (has(ops, 'single')) return { data: { id: 'ca-1', challenge_id: 'ch-motion', student_id: studentId, status, due_date: null }, error: null };
+      return undefined;
+    },
+    notifications: () => ({ data: [{ id: 'n1' }, { id: 'n2' }], error: null }),
+  });
+
+  test('completing a challenge clears that student’s and their parents’ open notifications for it', async () => {
+    mockResolveQuery.mockImplementation(completeWorld());
+    const res = await request(app).post('/challenges/ca-1/complete').send({ studentId: S1, score: 80 });
+    expect(res.status).toBe(200);
+    const [[, ops]] = notificationWrites();
+    expect(ops).toEqual(expect.arrayContaining([
+      ['update', { read_at: expect.any(String) }],
+      ['eq', 'entity_type', 'challenge_assignment'],
+      ['eq', 'entity_id', 'ca-1'],
+      ['is', 'read_at', null],
+      ['or', `recipient_id.eq.${S1},child_id.eq.${S1}`],
+    ]));
+    const log = logSpy.mock.calls.map(c => c[0]).find(l => /notification\.clear/.test(l));
+    expect(JSON.parse(log)).toMatchObject({ evt: 'notification.clear', ok: true, cleared: 2, reason: 'completed' });
+  });
+
+  test.each([
+    ['someone else’s challenge (403)', completeWorld('assigned', 'another-student'), 403],
+    ['already completed (no-op)', completeWorld('completed'), 200],
+  ])('%s → nothing cleared', async (_l, w, status) => {
+    mockResolveQuery.mockImplementation(w);
+    const res = await request(app).post('/challenges/ca-1/complete').send({ studentId: S1, score: 80 });
+    expect(res.status).toBe(status);
+    expect(notificationWrites()).toHaveLength(0);
+  });
+
+  test('unassigning clears every open notification for that assignment', async () => {
+    mockResolveQuery.mockImplementation(world({
+      challenge_assignments: (ops) => (has(ops, 'single') ? { data: { id: 'ca-1' }, error: null } : undefined),
+      notifications: () => ({ data: [], error: null }),
+    }));
+    const res = await request(app).post('/challenges/unassign').send({ challengeId: 'ch-motion', studentId: S1 });
+    expect(res.status).toBe(200);
+    const [[, ops]] = notificationWrites();
+    expect(ops).toEqual(expect.arrayContaining([['eq', 'entity_id', 'ca-1'], ['is', 'read_at', null]]));
+    expect(ops.some(o => o[0] === 'or')).toBe(false);
+  });
+
+  test('a failure to clear never fails the completion', async () => {
+    mockResolveQuery.mockImplementation(world({
+      challenge_assignments: completeWorld().bind(null, 'challenge_assignments'),
+      notifications: () => ({ data: null, error: { message: 'db down' } }),
+    }));
+    const res = await request(app).post('/challenges/ca-1/complete').send({ studentId: S1, score: 80 });
+    expect(res.status).toBe(200);
+  });
 });

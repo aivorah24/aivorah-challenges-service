@@ -10,7 +10,7 @@ const {
   isPastDue,
   notifyChallengeAssigned,
 } = require('../services/challenges');
-const { challengeAssignedEvent, createNotificationEvent } = require('../services/notify');
+const { challengeAssignedEvent, createNotificationEvent, clearNotificationsForEntity } = require('../services/notify');
 
 function uuidv4() { return require('crypto').randomUUID(); }
 
@@ -297,6 +297,7 @@ router.post('/unassign', async (req, res) => {
     .single();
   if (existing) {
     await supabase.from('schedule_events').delete().eq('assignment_id', existing.id);
+    await clearNotificationsForEntity({ entityId: existing.id, reason: 'unassigned' });
   }
 
   await supabase
@@ -335,6 +336,8 @@ router.post('/:assignmentId/complete', async (req, res) => {
     .eq('id', assignmentId)
     .select()
     .single();
+
+  await clearNotificationsForEntity({ entityId: assignmentId, studentId, reason: 'completed' });
 
   // Update student_stats XP in Supabase
   try {
